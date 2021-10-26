@@ -6,7 +6,11 @@ import time
 from typing import NoReturn
 
 from game.SETTINGS import JSON_PATH
-from game.exceptions import NotCorrectColorIndex
+from game.exceptions import NotCorrectColorIndex, UserValidationError
+
+
+JSON_GAME_PATH = JSON_PATH + "game_data.json"
+JSON_USER_PATH = JSON_PATH + "user_data.json"
 
 class RedBlack:
     def __init__(self, user_color_index, bet, game_mode):
@@ -69,11 +73,9 @@ class RedBlack:
         
         return 0
     
-    def _write_to_json(self, JSON_PATH, user) -> NoReturn:
-        JSON_PATH += "game_data.json"
-
-        if os.stat(JSON_PATH).st_size:
-            with open(JSON_PATH, 'r', encoding='utf-8') as read_file:
+    def _write_to_json(self, user) -> NoReturn:
+        if os.stat(JSON_GAME_PATH).st_size:
+            with open(JSON_GAME_PATH, 'r', encoding='utf-8') as read_file:
                 data = json.load(read_file)
         else:
             data = []
@@ -85,7 +87,7 @@ class RedBlack:
                                     "user_bet": self.bet,
                                     "user_prize": self.get_prize_color_bet()}})
 
-        with open(JSON_PATH, 'w', encoding='utf-8') as json_file:
+        with open(JSON_GAME_PATH, 'w', encoding='utf-8') as json_file:
                 json.dump(data, json_file, ensure_ascii=False)
 
 class GameInterface:
@@ -128,8 +130,8 @@ class GameInterface:
 
 class Registration:
     @staticmethod
-    def is_signed_up(username) -> bool:
-        users_list = User.get_users_list(JSON_PATH)
+    def is_signed_up(username: str) -> bool:
+        users_list = User.get_users_list()
         for user in users_list:
             if username == next(iter(user)):
                 return True
@@ -143,16 +145,19 @@ class Registration:
     def is_username_and_password_valid(function):
         def wrapper(self, *args, **kwargs):
             if not re.match(r".{8,}", self.password):
-                return False
+                raise UserValidationError('Password length must be more than 8 symbols')
             
             if not re.match(r"@[^\d]+", self.username):
-                return False
+                raise UserValidationError('Nicname must start with "@" symbol')
 
             return function(self, *args, **kwargs)
         return wrapper
     
     @is_username_and_password_valid
     def check_data(self, password_repeat: str) -> bool:
+        if not self.password == password_repeat:
+            raise UserValidationError('Passwords must be the same!')
+
         return self.password == password_repeat
 
 class User:
@@ -165,7 +170,7 @@ class User:
                     "password": password,
                     "bank": 100}
         user = User(user_hash)
-        user._write_to_json(JSON_PATH)
+        user._write_to_json()
 
         message = f"Welcome {user.username}. Your password: {user.password}"
 
@@ -184,19 +189,18 @@ class User:
         return status, user
 
     @staticmethod
-    def get_users_list(JSON_PATH) -> list:
-        JSON_PATH += "user_data.json"
+    def get_users_list() -> list:
         users_list = []
 
-        if os.stat(JSON_PATH).st_size:
-            with open(JSON_PATH, "r", encoding="utf-8") as read_file:
+        if os.stat(JSON_USER_PATH).st_size:
+            with open(JSON_USER_PATH, "r", encoding="utf-8") as read_file:
                 users_list = json.load(read_file)
             
         return users_list
     
     @staticmethod
     def get_user_instance(username: str):
-        users_list = User.get_users_list(JSON_PATH)
+        users_list = User.get_users_list()
         for user_dict in users_list:
             if username == next(iter(user_dict)):
                 user_hash = {"username": next(iter(user_dict))}
@@ -235,28 +239,27 @@ class User:
 
         return user_hash
     
-    def _write_to_json(self, JSON_PATH) -> NoReturn:
-        JSON_PATH += "user_data.json"
+    def _write_to_json(self) -> NoReturn:
 
-        if os.stat(JSON_PATH).st_size:
-            with open(JSON_PATH, 'r', encoding='utf-8') as read_file:
+        if os.stat(JSON_USER_PATH).st_size:
+            with open(JSON_USER_PATH, 'r', encoding='utf-8') as read_file:
                 data = json.load(read_file)
+                for num, user in enumerate(data):
+                    if next(iter(user)) == self.username:
+                        data[num] = {self.username: self.__get_user_hash()}
+                        break
+                else:
+                    data.append({self.username: self.__get_user_hash()})
+
         else:
             data = []
+            data.append({self.username: self.__get_user_hash()})
 
 
-        if os.stat(JSON_PATH).st_size:
-            for num, user in enumerate(data):
-                if next(iter(user)) == self.username:
-                    data[num] = {self.username: self.__get_user_hash()}
-                    break
-            else:
-                data.append({self.username: self.__get_user_hash()})
-
-        with open(JSON_PATH, 'w', encoding='utf-8') as json_file:
+        with open(JSON_USER_PATH, 'w', encoding='utf-8') as json_file:
                 json.dump(data, json_file, ensure_ascii=False)
 
-def registration():
+def register_user():
     while True:
         reg_choice = input("For sign up print '1'!\nPrint '2' to login.\nPress Enter to exit\n")
         if reg_choice == '1':
@@ -267,10 +270,7 @@ def registration():
             registration = Registration({"username": username,
                                         "password": password})
 
-            if not registration.check_data(password_repeat):
-                print("\nWarning!")
-                print('Nicname must start with "@" symbol\nPassword length must be more than 8 symbols\n')
-                continue
+            registration.check_data(password_repeat)
 
             data = User.sign_up(username, password)
             if data is None:
@@ -340,7 +340,7 @@ def game_roulette(user):
         console.checking_winning()
 
         user.bank += prize
-        game._write_to_json(JSON_PATH, user)
+        game._write_to_json(user)
         print(user.get_bank())
         user_choice = input("Нажмите:\nEnter.) Продолжить играть\n"
         "1.) Выход из программы\n"
@@ -357,9 +357,9 @@ def game_roulette(user):
             continue
     
 def main() -> NoReturn:
-    user = registration()
+    user = register_user()
     game_roulette(user)
-    user._write_to_json(JSON_PATH)
+    user._write_to_json()
     print("До встречи!")
 
 
